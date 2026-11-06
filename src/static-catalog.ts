@@ -1,0 +1,43 @@
+import type { Vendor } from "./catalog.js"
+
+export const METADATA_SOURCE = "Junie 3959.5 embedded ModelOption/EffortLevel/ModelCapabilities; not account entitlement"
+type Row = readonly [string, string, Vendor, number, number | null, readonly string[], string]
+const rows: readonly Row[] = [
+  ["gemini-3-flash-preview","Gemini 3 Flash Preview","google",1048576,null,["low","medium","high"],"high"],
+  ["gemini-3.1-flash-lite","Gemini 3.1 Flash Lite","google",1048576,null,["minimal","low","medium","high"],"high"],
+  ["grok-4.5","Grok 4.5","grok",500000,null,["low","medium","high"],"low"],
+  ["grok-4.6","Grok 4.6","grok",500000,null,["low","medium","high","xhigh"],"low"],
+  ["grok-4.7","Grok 4.7","grok",500000,null,["low","medium","high","xhigh"],"low"],
+  ["claude-sonnet-5","Claude Sonnet 5","anthropic",1000000,128000,["low","medium","high","xhigh","max"],"low"],
+  ["claude-sonnet-5-5","Claude Sonnet 5.5","anthropic",1000000,128000,["low","medium","high","xhigh","max"],"high"],
+  ["claude-haiku-5-5","Claude Haiku 5.5","anthropic",1000000,64000,["low","medium","high","xhigh"],"high"],
+  ["claude-sonnet-4-6","Claude Sonnet 4.6","anthropic",1000000,128000,["low","medium","high","max"],"low"],
+  ["claude-opus-4-6","Claude Opus 4.6","anthropic",1000000,128000,["low","medium","high","max"],"low"],
+  ["claude-opus-4-7","Claude Opus 4.7","anthropic",1000000,128000,["low","medium","high","xhigh","max"],"low"],
+  ["claude-opus-4-8","Claude Opus 4.8","anthropic",1000000,128000,["low","medium","high","xhigh","max"],"low"],
+  ["claude-opus-5","Claude Opus 5","anthropic",1000000,128000,["low","medium","high","xhigh","max"],"low"],
+  ["claude-opus-5-5","Claude Opus 5.5","anthropic",1000000,128000,["low","medium","high","xhigh","max"],"medium"],
+  ["claude-fable-5","Claude Fable 5","anthropic",1000000,128000,["low","medium","high","xhigh","max"],"low"],
+  ["claude-fable-5-1","Claude Fable 5.1","anthropic",1000000,128000,["low","medium","high","xhigh","max"],"low"],
+  ["gpt-5-2025-08-07","GPT-5","openai",400000,null,["minimal","low","medium","high"],"low"],
+  ["gpt-5.3-codex","GPT-5.3 codex","openai",400000,null,["low","medium","high","xhigh"],"low"],
+  ["gpt-5.4","GPT-5.4","openai",1000000,null,["low","medium","high","xhigh"],"low"],
+  ["gpt-5.5","GPT-5.5","openai",1000000,null,["low","medium","high","xhigh"],"low"],
+  ["gpt-5.6-sol","GPT-5.6 Sol","openai",1000000,null,["none","low","medium","high","xhigh","max"],"low"],
+  ["gpt-6-astra","GPT-6 Astra","openai",1000000,null,["low","medium","high","xhigh","max"],"low"],
+  ["gpt-5.6-terra","GPT-5.6 Terra","openai",1000000,null,["none","low","medium","high","xhigh","max"],"low"],
+  ["gpt-5.6-luna","GPT-5.6 Luna","openai",1000000,null,["none","low","medium","high","xhigh","max"],"low"],
+  ["gpt-6-sol","GPT-6 Sol","openai",1000000,null,["none","low","medium","high","xhigh","max"],"low"],
+  ["gpt-6.1-sol","GPT-6.1 Sol","openai",1000000,null,["low","medium","high","xhigh","max"],"low"],
+  ["gpt-6.1-terra","GPT-6.1 Terra","openai",1050000,128000,["none","low","medium","high","xhigh","max"],"low"],
+  ["gpt-6-luna","GPT-6 Luna","openai",1000000,null,["none","low","medium","high","xhigh","max"],"low"],
+  ["gpt-5.2-2025-12-11","GPT-5.2","openai",400000,null,["low","medium","high","xhigh"],"low"],
+  ["gemini-3.1-pro-preview","Gemini 3.1 Pro Preview","google",1048576,null,["low","medium","high"],"high"],
+  ["grok-4.3","Grok 4.3","grok",1000000,null,["low","medium","high"],"low"],
+  ["gemini-3.6-flash","Gemini 3.6 Flash","google",1048576,null,["minimal","low","medium","high"],"high"],
+  ["gemini-3.7-flash","Gemini 3.7 Flash","google",1048576,null,["low","medium","high"],"medium"],
+  ["gemini-3.8-flash","Gemini 3.8 Flash","google",1048576,null,["low","medium","high"],"medium"],
+  ["gemini-4-argon","Gemini 4 Argon","google",1048576,null,["low","medium","high"],"medium"],
+  ["gemini-3.5-flash-lite","Gemini 3.5 Flash Lite","google",1048576,null,["minimal","low","medium","high"],"high"],
+]
+export const advertisedModels = rows.map(([id, name, vendor, context, output, efforts, defaultEffort]) => ({ id, name, vendor, context, output, efforts, defaultEffort }))
