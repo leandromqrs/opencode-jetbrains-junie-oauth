@@ -1,0 +1,18 @@
+{
+  "name": "opencode-jetbrains-junie-oauth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": ["dist", "docs", "examples"],
+  "exports": {".": "./dist/index.js"},
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "quota:adapter": "node dist/quota-adapter.js",
+    "test:quota-adapter": "tsx --test test/quota-adapter.test.ts && node --test scripts/quota-adapter.test.mjs"
+  },
+  "dependencies": {"@opencode/client": "2.2.5", "@opencode/plugin": "2.2.5", "effect": "4.0.6"},
+  "devDependencies": {"@opencode/ai": "2.2.5", "@types/node": "^22.0.0", "tsx": "^4.0.0", "typescript": "^5.9.0"},
+  "engines": {"node": ">=22"}
+}
