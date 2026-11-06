@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import type { Socket } from "node:net"
 import { toJunieQuotaV1, type JunieBalance } from "./quota.js"
+import { withCancellation } from "./cancellation.js"
 
 export interface QuotaBridgeOptions {
   port: number
@@ -47,19 +48,11 @@ function serializeBalance(balance: JunieBalance): string {
   return body
 }
 
-async function loadBalance(getBalance: QuotaBridgeOptions["getBalance"], signal: AbortSignal): Promise<JunieBalance> {
-  let onAbort: (() => void) | undefined
-  const cancelled = new Promise<never>((_resolve, reject) => {
-    onAbort = () => reject(new Error("Cancelled"))
-    if (signal.aborted) onAbort()
-    else signal.addEventListener("abort", onAbort, { once: true })
-  })
-  try {
-    return await Promise.race([Promise.resolve().then(() => {
-      signal.throwIfAborted()
-      return getBalance(signal)
-    }), cancelled])
-  } finally { if (onAbort) signal.removeEventListener("abort", onAbort) }
+function loadBalance(getBalance: QuotaBridgeOptions["getBalance"], signal: AbortSignal): Promise<JunieBalance> {
+  return withCancellation(Promise.resolve().then(() => {
+    signal.throwIfAborted()
+    return getBalance(signal)
+  }), signal)
 }
 
 export async function startQuotaBridge(options: QuotaBridgeOptions): Promise<QuotaBridge> {

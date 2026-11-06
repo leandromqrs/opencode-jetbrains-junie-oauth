@@ -1,3 +1,5 @@
+import { withCancellation } from "./cancellation.js"
+
 const BALANCE_URL = "https://ingrazzio-cloud-prod.labs.jb.gg/auth/test"
 const TIMEOUT_MS = 10_000
 const MAX_BODY_BYTES = 65_536
@@ -84,17 +86,6 @@ function requestHeaders(accessToken: string, routingHeaders: JunieBalanceOptions
     }
   } catch { throw new QuotaFailure("invalid-context") }
   return headers
-}
-
-async function withCancellation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  let onAbort: (() => void) | undefined
-  const cancelled = new Promise<never>((_resolve, reject) => {
-    onAbort = () => reject(new Error("Cancelled"))
-    if (signal.aborted) onAbort()
-    else signal.addEventListener("abort", onAbort, { once: true })
-  })
-  try { return await Promise.race([operation, cancelled]) }
-  finally { if (onAbort) signal.removeEventListener("abort", onAbort) }
 }
 
 function cancelBody(response: Response): void {

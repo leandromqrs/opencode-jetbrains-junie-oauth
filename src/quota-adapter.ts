@@ -4,6 +4,7 @@ import { OpenCode } from "@opencode/client"
 import { Service, type Endpoint } from "@opencode/client/service"
 import { startQuotaBridge, type QuotaBridge } from "./quota-bridge.js"
 import type { JunieBalance } from "./quota.js"
+import { withCancellation } from "./cancellation.js"
 
 const quotaRPC = {
   id: "jetbrains-junie",
@@ -25,17 +26,6 @@ function validLocation(location: string): boolean {
   return typeof location === "string" && location.length <= 4_096 && isAbsolute(location) && !/[\x00-\x1f\x7f]/.test(location)
 }
 
-async function cancellable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  let onAbort: (() => void) | undefined
-  const cancelled = new Promise<never>((_resolve, reject) => {
-    onAbort = () => reject(new Error("Quota service unavailable."))
-    if (signal.aborted) onAbort()
-    else signal.addEventListener("abort", onAbort, { once: true })
-  })
-  try { return await Promise.race([operation, cancelled]) }
-  finally { if (onAbort) signal.removeEventListener("abort", onAbort) }
-}
-
 function boundedRpcFetch(endpoint: Endpoint, fetcher: typeof globalThis.fetch): typeof globalThis.fetch {
   const base = new URL(endpoint.url)
   if (base.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(base.hostname) || base.username || base.password || base.search || base.hash || base.pathname !== "/") throw new Error("Quota service unavailable.")
@@ -51,7 +41,7 @@ function boundedRpcFetch(endpoint: Endpoint, fetcher: typeof globalThis.fetch): 
       }
       return response
     })
-    const response = await cancellable(pending, request.signal)
+    const response = await withCancellation(pending, request.signal, "Quota service unavailable.")
     if (!response.ok || response.redirected || !response.body || Number(response.headers.get("content-length")) > 65_536) {
       void response.body?.cancel().catch(() => {})
       throw new Error("Quota service unavailable.")
@@ -61,7 +51,7 @@ function boundedRpcFetch(endpoint: Endpoint, fetcher: typeof globalThis.fetch): 
     let size = 0
     try {
       while (true) {
-        const { value, done } = await cancellable(reader.read(), request.signal)
+        const { value, done } = await withCancellation(reader.read(), request.signal, "Quota service unavailable.")
         if (done) break
         size += value.byteLength
         if (size > 65_536) throw new Error("Quota service unavailable.")
@@ -96,7 +86,7 @@ export async function startQuotaAdapter(options: QuotaAdapterOptions): Promise<Q
       try {
         signal.throwIfAborted()
         // Discover on every authenticated request so a service replacement cannot leave stale credentials or balance.
-        const endpoint = await cancellable((options.discover ?? Service.discover)(), signal)
+        const endpoint = await withCancellation((options.discover ?? Service.discover)(), signal, "Quota service unavailable.")
         if (!endpoint) throw new Error("Quota service unavailable.")
         signal.throwIfAborted()
         const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint), fetch: boundedRpcFetch(endpoint, options.fetch ?? globalThis.fetch) })
