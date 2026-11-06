@@ -4,6 +4,25 @@ The plugin registers provider `jetbrains` and integration `jetbrains-junie-oauth
 
 ## Authentication and inference
 
+```mermaid
+flowchart TD
+    Browser[Browser authorization] --> OAuth[PKCE and state-checked loopback callback]
+    OAuth --> Credentials[(OpenCode credential storage)]
+    Credentials -. Active OAuth connection .-> Plugin[Plugin registration and hooks]
+    Refresh[Explicit refresh RPC] --> Catalog[Bounded catalog discovery]
+    Plugin --> Catalog
+    Catalog --> Metadata[JetBrains model metadata]
+    Catalog --> Cache[(Account-scoped catalog snapshots)]
+    Cache --> Inventory[Native driver and model selection]
+    Inventory --> Drivers[Anthropic / OpenAI / Google / xAI drivers]
+    Drivers --> Hook[Plugin request validation and safeguards]
+    Hook --> Conversion[Host HTTP conversion]
+    Conversion --> Gateway[Junie gateway]
+    Warning[Uncorrected host drops redirect policy and signal] -.-> Conversion
+```
+
+The inference path above illustrates the transport boundary, not approval to run inference on an uncorrected host.
+
 `src/oauth.ts` implements PKCE with a state-checked loopback callback, bounded token exchange, cancellation, and in-process single-flight refresh. OpenCode owns credential persistence and cross-process refresh coordination. Junie CLI credentials are never imported.
 
 `src/inventory.ts` selects native Anthropic, OpenAI Responses, Google, or xAI drivers and their effort settings. Those drivers handle SSE, reasoning, tools, and usage; the plugin does not translate streams. Advertised input/output support is text only.
@@ -27,8 +46,22 @@ RPCs `status` and `catalog` expose cache state and provenance. Listed limits ove
 
 The optional panel path is:
 
-```text
-quota consumer → loopback adapter → native quota RPC → Junie metadata
+```mermaid
+sequenceDiagram
+    participant Consumer as Quota consumer
+    participant Adapter as Optional loopback adapter
+    participant Service as Native OpenCode service
+    participant Quota as Plugin quota reader
+    participant Junie as Fixed Junie auth/test endpoint
+    Consumer->>Adapter: GET /quota with independent bearer key
+    Adapter->>Adapter: Validate request and discover native service
+    Adapter->>Service: Authenticated quota RPC for project location
+    Service->>Quota: Resolve active OAuth connection
+    Quota->>Junie: Read balance metadata with OAuth
+    Junie-->>Quota: Balance metadata
+    Quota-->>Service: Sanitized balance and availability
+    Service-->>Adapter: Native RPC result
+    Adapter-->>Consumer: Bounded quota-v1 response
 ```
 
 `src/quota-bridge.ts` accepts authenticated `GET /quota` on `127.0.0.1` and emits only `quota-v1` balance/status data. Method, path, Host, Origin, body, and independent Bearer-key checks precede balance retrieval. Requests, connections, bodies, and shutdown are bounded.
