@@ -1,0 +1,10 @@
+{
+  "id": "junie-balance",
+  "providerId": "jetbrains",
+  "label": "Junie",
+  "mode": "remote-api",
+  "url": "http://127.0.0.1:62365/quota",
+  "format": "quota-v1",
+  "apiKeyEnv": "JUNIE_QUOTA_ADAPTER_KEY",
+  "enabled": false
+}

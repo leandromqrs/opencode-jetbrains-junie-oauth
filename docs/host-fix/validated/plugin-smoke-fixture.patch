@@ -1,0 +1,150 @@
+diff --git a/packages/core/test/jetbrains-host-smoke.test.ts b/packages/core/test/jetbrains-host-smoke.test.ts
+new file mode 100644
+index 0000000..cd73440
+--- /dev/null
++++ b/packages/core/test/jetbrains-host-smoke.test.ts
+@@ -0,0 +1,144 @@
++import { expect } from "bun:test"
++import { configure } from "@opencode/ai/providers/anthropic-compatible"
++import { Agent } from "@opencode/schema/agent"
++import { Credential } from "@opencode/schema/credential"
++import { Integration } from "@opencode/schema/integration"
++import { Money } from "@opencode/schema/money"
++import { Session } from "@opencode/schema/session"
++import { Location } from "@opencode/core/location"
++import { Plugin } from "@opencode/core/plugin"
++import { PluginHost } from "@opencode/core/plugin/host"
++import { PluginPromise } from "@opencode/core/plugin/promise"
++import { Project } from "@opencode/core/project"
++import { AbsolutePath } from "@opencode/core/schema"
++import { SessionModelRequest } from "@opencode/core/session/model-request"
++import { SessionModelTransport } from "@opencode/core/session/model-transport"
++import { SessionRunnerModel } from "@opencode/core/session/runner/model"
++import { DateTime, Effect } from "effect"
++import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
++import { testEffect } from "./lib/effect"
++import { PluginTestLayer } from "./plugin/fixture"
++
++const it = testEffect(PluginTestLayer)
++const session = Session.Info.make({
++  id: Session.ID.make("ses_isolated_jetbrains"),
++  projectID: Project.ID.global,
++  cost: Money.USD.zero,
++  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
++  time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
++  location: Location.Ref.make({ directory: AbsolutePath.make("/isolated-project") }),
++})
++const transport = SessionModelTransport.Service.of({
++  bind: () => ({ execute: () => Effect.die("No WebSocket in this fixture") }),
++  close: () => Effect.void,
++  closeAll: Effect.void,
++})
++
++for (const status of [303, 307]) {
++  it.effect(`actual JetBrains plugin hook refuses local HTTP ${status} after host conversion`, () =>
++    Effect.gen(function* () {
++      const module = process.env.JETBRAINS_PLUGIN_MODULE
++      if (!module) throw new Error("JETBRAINS_PLUGIN_MODULE must point to the built plugin module")
++      const definition = yield* Effect.promise(() => import(module))
++      const plugins = yield* Plugin.Service
++      const context = yield* PluginHost.make(plugins)
++      yield* PluginPromise.fromPromise(definition.default).effect({
++        ...context,
++        options: { models: [{ id: "claude-test", context: 1000, output: 100 }], timeoutMs: 1000 },
++        integration: {
++          ...context.integration,
++          connection: {
++            ...context.integration.connection,
++            active: () =>
++              Effect.succeed({
++                type: "credential",
++                id: Credential.ID.make("fake-only"),
++                label: "fake",
++                method: "oauth",
++              }),
++            resolve: () =>
++              Effect.succeed({
++                type: "oauth",
++                methodID: Integration.MethodID.make("pkce"),
++                access: "fake-access",
++                refresh: "fake-refresh",
++                expires: Date.now() + 60000,
++              }),
++          },
++        },
++      })
++      let targets = 0
++      let sends = 0
++      const target = Bun.serve({
++        hostname: "127.0.0.1",
++        port: 0,
++        fetch() {
++          targets++
++          return new Response("unexpected")
++        },
++      })
++      const source = Bun.serve({
++        hostname: "127.0.0.1",
++        port: 0,
++        fetch() {
++          return new Response(null, { status, headers: { Location: target.url.href } })
++        },
++      })
++      yield* Effect.addFinalizer(() =>
++        Effect.sync(() => {
++          source.stop(true)
++          target.stop(true)
++        }),
++      )
++      const fakeTransport: typeof fetch = Object.assign(
++        (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
++          sends++
++          expect(String(input)).toBe("https://ingrazzio-cloud-prod.labs.jb.gg/v1/messages")
++          const headers = new Headers(init?.headers)
++          expect(headers.get("authorization")).toBe("Bearer fake-access")
++          expect(headers.get("x-api-key")).toBeNull()
++          expect(init?.redirect).toBe("error")
++          return fetch(source.url.href, init)
++        },
++        fetch,
++      )
++      const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
++      const prepared = yield* requests.primary({
++        session,
++        agent: Agent.ID.make("build"),
++        system: [],
++        messages: [],
++        model: SessionRunnerModel.resolved(
++          configure({
++            provider: "jetbrains",
++            baseURL: "https://ingrazzio-cloud-prod.labs.jb.gg/v1",
++            apiKey: "fake",
++          }).model("claude-test"),
++          {
++            capabilities: { tools: false, input: ["text"], output: ["text"] },
++            cost: [],
++            limit: { context: 1000, output: 100 },
++          },
++        ),
++      })
++      const middleware = prepared.options.http
++      if (!middleware) throw new Error("Plugin did not register native HTTP hooks")
++      const client = yield* HttpClient.HttpClient
++      const request = HttpClientRequest.post("https://ingrazzio-cloud-prod.labs.jb.gg/v1/messages").pipe(
++        HttpClientRequest.bodyText('{"model":"claude-test","messages":[],"max_tokens":10}', "application/json"),
++      )
++      const result = yield* Effect.exit(
++        middleware(request, (sent) => client.execute(sent)).pipe(
++          Effect.provideService(FetchHttpClient.Fetch, fakeTransport),
++        ),
++      )
++      expect(result._tag).toBe("Failure")
++      expect(sends).toBe(1)
++      expect(targets).toBe(0)
++    }).pipe(
++      Effect.scoped,
++      Effect.provide(FetchHttpClient.layer),
++      Effect.provideService(SessionModelTransport.Service, transport),
++    ),
++  )
++}

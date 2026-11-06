@@ -1,0 +1,46 @@
+TAP version 13
+# Subtest: final fetch refuses 303 without reaching the redirect target
+ok 1 - final fetch refuses 303 without reaching the redirect target
+  ---
+  duration_ms: 29.940083
+  type: 'test'
+  ...
+# Subtest: final fetch refuses 307 without reaching the redirect target
+ok 2 - final fetch refuses 307 without reaching the redirect target
+  ---
+  duration_ms: 11.359907
+  type: 'test'
+  ...
+# Subtest: a hook deadline aborts an in-flight fetch and closes its connection
+ok 3 - a hook deadline aborts an in-flight fetch and closes its connection
+  ---
+  duration_ms: 157.81888
+  type: 'test'
+  ...
+# Subtest: an already-aborted hook signal prevents dispatch
+ok 4 - an already-aborted hook signal prevents dispatch
+  ---
+  duration_ms: 1.315887
+  type: 'test'
+  ...
+# Subtest: the hook signal still aborts the response stream after headers
+ok 5 - the hook signal still aborts the response stream after headers
+  ---
+  duration_ms: 9.252384
+  type: 'test'
+  ...
+# Subtest: scoped fetch preserves Effect cancellation and inherited fetch options
+ok 6 - scoped fetch preserves Effect cancellation and inherited fetch options
+  ---
+  duration_ms: 1.259364
+  type: 'test'
+  ...
+1..6
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 663.620876

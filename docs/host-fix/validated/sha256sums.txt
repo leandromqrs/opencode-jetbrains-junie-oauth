@@ -1,0 +1,2 @@
+1b4d5a6a6cf868bc9b1b034a73d87d0a7aff8515ad4ae53ee3402d22c076a8c5  artifacts/host-fix-validated.patch
+66f1034ae2068e3bf695ca305649d916c40dac0ab4960ed515c1cd24b5fe1d2b  artifacts/plugin-smoke-fixture.patch

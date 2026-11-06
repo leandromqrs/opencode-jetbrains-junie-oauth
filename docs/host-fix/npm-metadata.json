@@ -1,0 +1,33 @@
+[
+  {
+    "repository": {
+      "url": "git+https://github.com/anomalyco/opencode.git",
+      "type": "git",
+      "directory": "packages/core"
+    },
+    "homepage": "https://github.com/anomalyco/opencode#readme",
+    "dist": {
+      "shasum": "80697bc762a67bf5f05fd2efe43195caec2d7af6",
+      "tarball": "https://registry.npmjs.org/@opencode/core/-/core-2.2.5.tgz",
+      "fileCount": 1412,
+      "integrity": "sha512-6osbW17TBHXdjFPHKun/vhBLFTamUwXQdBgfte7/fDaVjI/N9MuuWTQA/Uq9mzzJ8pxQCEUePBB3He2We0xfIw==",
+      "signatures": [
+        {
+          "sig": "MEYCIQCKtGdHDfNRL/C9ygi9UVelU1TAz+fdUMnSbx3pYx86cgIhAJssvpFCZoYStFmUm3i0l58pJipJV2LpnOM5ZBCODCPf",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "sig": "MEQCIE02Z89MlPdu0StifdS6Yqr1M8hBH1uoZXyzPsW499SSAiAvSTqK/CGIbouKW3ZXyqloYxNBZKl3HXYsvrmYpipaIA==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@opencode%2fcore@2.2.5",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 13649609
+    }
+  }
+]

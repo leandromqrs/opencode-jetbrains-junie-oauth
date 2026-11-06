@@ -1,0 +1,363 @@
+diff --git a/packages/core/src/session/model-request.ts b/packages/core/src/session/model-request.ts
+index a3bde4c..d3a7033 100644
+--- a/packages/core/src/session/model-request.ts
++++ b/packages/core/src/session/model-request.ts
+@@ -35,6 +35,7 @@ import { QuestionTool } from "../tool/plugin/question.js"
+ import { Tool } from "../tool.js"
+ import { SessionAffinity } from "./affinity.js"
+ import { SessionModelTransport } from "./model-transport.js"
++import { withWebRequestOptions } from "./model-http-options.js"
+ import { SessionRunnerModel } from "./runner/model.js"
+ import { SessionSchema } from "./schema.js"
+ import { SessionSystemPrompt } from "./system-prompt.js"
+@@ -351,7 +352,7 @@ export const layer = Layer.effect(
+                         before.request.headers.get("content-type") ?? undefined,
+                       )
+                     : HttpClientRequest.fromWeb(before.request)
+-              const res = yield* handler(sent)
++              const res = yield* withWebRequestOptions(before.request, handler(sent))
+               const after = yield* hooks.trigger("session", "http.response", {
+                 ...scope,
+                 request: before.request,
+diff --git a/packages/core/test/session-model-request-hooks.test.ts b/packages/core/test/session-model-request-hooks.test.ts
+index 32b6eab..f00097b 100644
+--- a/packages/core/test/session-model-request-hooks.test.ts
++++ b/packages/core/test/session-model-request-hooks.test.ts
+@@ -13,7 +13,7 @@ import { SessionModelRequest } from "@opencode/core/session/model-request"
+ import { SessionModelTransport } from "@opencode/core/session/model-transport"
+ import { SessionRunnerModel } from "@opencode/core/session/runner/model"
+ import { DateTime, Effect, Stream } from "effect"
+-import { HttpClientRequest, HttpClientResponse } from "effect/http"
++import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
+ import { testEffect } from "./lib/effect"
+ import { PluginTestLayer } from "./plugin/fixture"
+ 
+@@ -41,6 +41,132 @@ const transport = SessionModelTransport.Service.of({
+ })
+ 
+ describe("SessionModelRequest HTTP hooks", () => {
++  for (const status of [303, 307]) {
++    it.effect(`preserves a hook's redirect refusal through final fetch for HTTP ${status}`, () =>
++      Effect.gen(function* () {
++        let reached = 0
++        let redirected = 0
++        const target = Bun.serve({
++          hostname: "127.0.0.1",
++          port: 0,
++          fetch() {
++            redirected++
++            return new Response("unexpected")
++          },
++        })
++        const source = Bun.serve({
++          hostname: "127.0.0.1",
++          port: 0,
++          fetch() {
++            reached++
++            return new Response(null, { status, headers: { Location: target.url.href } })
++          },
++        })
++        yield* Effect.addFinalizer(() =>
++          Effect.sync(() => {
++            source.stop(true)
++            target.stop(true)
++          }),
++        )
++        const hooks = yield* PluginHooks.Service
++        yield* hooks.register("session", "http.request", (event) =>
++          Effect.sync(() => {
++            event.request = new Request(source.url.href, {
++              method: "POST",
++              body: "FAKE-CONVERSATION",
++              redirect: "error",
++            })
++          }),
++        )
++        const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
++        const prepared = yield* requests.primary({
++          session,
++          agent: Agent.ID.make("build"),
++          model,
++          system: [],
++          messages: [],
++        })
++        const middleware = prepared.options.http
++        if (!middleware) throw new Error("Expected HTTP middleware")
++        const client = yield* HttpClient.HttpClient
++        const result = yield* Effect.exit(
++          middleware(HttpClientRequest.post(source.url.href), (request) => client.execute(request)),
++        )
++        expect(result._tag).toBe("Failure")
++        expect(reached).toBe(1)
++        expect(redirected).toBe(0)
++      }).pipe(
++        Effect.scoped,
++        Effect.provide(FetchHttpClient.layer),
++        Effect.provideService(SessionModelTransport.Service, transport),
++      ),
++    )
++  }
++
++  it.effect("preserves a hook deadline through final fetch and closes the connection", () =>
++    Effect.gen(function* () {
++      let reached = 0
++      let resolveClosed!: () => void
++      const closed = new Promise<void>((resolve) => {
++        resolveClosed = resolve
++      })
++      const source = Bun.serve({
++        hostname: "127.0.0.1",
++        port: 0,
++        fetch(request) {
++          reached++
++          return new Promise<Response>((resolve) =>
++            request.signal.addEventListener(
++              "abort",
++              () => {
++                resolveClosed()
++                resolve(new Response(null, { status: 499 }))
++              },
++              { once: true },
++            ),
++          )
++        },
++      })
++      yield* Effect.addFinalizer(() =>
++        Effect.sync(() => {
++          source.stop(true)
++        }),
++      )
++      const hooks = yield* PluginHooks.Service
++      yield* hooks.register("session", "http.request", (event) =>
++        Effect.sync(() => {
++          event.request = new Request(source.url.href, {
++            method: "POST",
++            body: "FAKE-CONVERSATION",
++            redirect: "error",
++            signal: AbortSignal.timeout(200),
++          })
++        }),
++      )
++      const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
++      const prepared = yield* requests.primary({
++        session,
++        agent: Agent.ID.make("build"),
++        model,
++        system: [],
++        messages: [],
++      })
++      const middleware = prepared.options.http
++      if (!middleware) throw new Error("Expected HTTP middleware")
++      const client = yield* HttpClient.HttpClient
++      const result = yield* Effect.exit(
++        middleware(HttpClientRequest.post(source.url.href), (request) => client.execute(request)),
++      )
++      expect(result._tag).toBe("Failure")
++      expect(reached).toBe(1)
++      yield* Effect.promise(() => closed).pipe(Effect.timeout("1 second"))
++    }).pipe(
++      Effect.scoped,
++      Effect.provide(FetchHttpClient.layer),
++      Effect.provideService(SessionModelTransport.Service, transport),
++    ),
++  )
++
+   it.effect("tags every Session request kind on http.request and http.response", () =>
+     Effect.gen(function* () {
+       const hooks = yield* PluginHooks.Service
+@@ -146,14 +272,12 @@ describe("SessionModelRequest HTTP hooks", () => {
+       }
+ 
+       const required = yield* Effect.forEach([1, 2], () =>
+-        requests
+-          .primary({ session, agent: Agent.ID.make("build"), model, system: [], messages: [], tools })
+-          .pipe(
+-            Effect.map((prepared) => {
+-              const tool = prepared.request.tools[0]
+-              return tool?.type === "tool" ? tool.inputSchema.required : undefined
+-            }),
+-          ),
++        requests.primary({ session, agent: Agent.ID.make("build"), model, system: [], messages: [], tools }).pipe(
++          Effect.map((prepared) => {
++            const tool = prepared.request.tools[0]
++            return tool?.type === "tool" ? tool.inputSchema.required : undefined
++          }),
++        ),
+       )
+ 
+       expect(required).toEqual([
+diff --git a/packages/core/src/session/model-http-options.ts b/packages/core/src/session/model-http-options.ts
+new file mode 100644
+index 0000000..8ec8ac3
+--- /dev/null
++++ b/packages/core/src/session/model-http-options.ts
+@@ -0,0 +1,19 @@
++import { Effect } from "effect"
++import { FetchHttpClient } from "effect/http"
++
++export const withWebRequestOptions = <A, E, R>(request: Request, effect: Effect.Effect<A, E, R>) =>
++  Effect.flatMap(FetchHttpClient.Fetch, (fetch) =>
++    Effect.provideService(
++      effect,
++      FetchHttpClient.Fetch,
++      Object.assign(
++        (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
++          fetch(input, {
++            ...init,
++            redirect: request.redirect,
++            signal: AbortSignal.any([request.signal, ...(init?.signal ? [init.signal] : [])]),
++          }),
++        fetch,
++      ),
++    ),
++  )
+diff --git a/packages/core/test/session/model-http-options.test.ts b/packages/core/test/session/model-http-options.test.ts
+new file mode 100644
+index 0000000..be375fc
+--- /dev/null
++++ b/packages/core/test/session/model-http-options.test.ts
+@@ -0,0 +1,144 @@
++import { test } from "bun:test"
++import assert from "node:assert/strict"
++import { createServer, type RequestListener, type Server } from "node:http"
++import { Effect, Stream } from "effect"
++import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
++import { withWebRequestOptions } from "../../src/session/model-http-options.js"
++
++async function listen(handler: RequestListener) {
++  const server = createServer(handler)
++  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
++  const address = server.address()
++  assert.ok(address && typeof address !== "string")
++  return { server, url: `http://127.0.0.1:${address.port}` }
++}
++
++async function close(server: Server) {
++  server.closeAllConnections()
++  await new Promise<void>((resolve) => server.close(() => resolve()))
++}
++
++function execute(request: Request, consume = false, onHeaders?: () => void) {
++  const sent = HttpClientRequest.bodyUint8Array(
++    HttpClientRequest.fromWeb(request),
++    new TextEncoder().encode("FAKE-CONVERSATION"),
++    "text/plain",
++  )
++  return Effect.gen(function* () {
++    const http = yield* HttpClient.HttpClient
++    const response = yield* withWebRequestOptions(request, http.execute(sent))
++    onHeaders?.()
++    if (consume) yield* Stream.runDrain(response.stream)
++    return response.status
++  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer))
++}
++
++for (const status of [303, 307]) {
++  test(`final fetch refuses ${status} without reaching the redirect target`, async () => {
++    let targets = 0
++    let sources = 0
++    const target = await listen((_req, res) => {
++      targets++
++      res.end("unexpected")
++    })
++    const source = await listen((_req, res) => {
++      sources++
++      res.writeHead(status, { Location: target.url })
++      res.end()
++    })
++    try {
++      const request = new Request(source.url, { method: "POST", body: "FAKE-CONVERSATION", redirect: "error" })
++      await assert.rejects(Effect.runPromise(execute(request)))
++      assert.equal(sources, 1)
++      assert.equal(targets, 0)
++    } finally {
++      await close(source.server)
++      await close(target.server)
++    }
++  })
++}
++
++test("a hook deadline aborts an in-flight fetch and closes its connection", async () => {
++  let resolveClosed!: () => void
++  const closed = new Promise<void>((resolve) => {
++    resolveClosed = resolve
++  })
++  let sourceReached = false
++  const source = await listen((req) => {
++    sourceReached = true
++    req.socket.once("close", resolveClosed)
++  })
++  try {
++    const request = new Request(source.url, { method: "POST", body: "fake", signal: AbortSignal.timeout(150) })
++    await assert.rejects(Effect.runPromise(execute(request)))
++    assert.equal(sourceReached, true)
++    await Promise.race([
++      closed,
++      new Promise((_, reject) => setTimeout(() => reject(new Error("Connection remained open")), 1000).unref()),
++    ])
++  } finally {
++    await close(source.server)
++  }
++})
++
++test("an already-aborted hook signal prevents dispatch", async () => {
++  let requests = 0
++  const source = await listen((_req, res) => {
++    requests++
++    res.end()
++  })
++  try {
++    const request = new Request(source.url, { method: "POST", body: "fake", signal: AbortSignal.abort() })
++    await assert.rejects(Effect.runPromise(execute(request)))
++    assert.equal(requests, 0)
++  } finally {
++    await close(source.server)
++  }
++})
++
++test("the hook signal still aborts the response stream after headers", async () => {
++  const controller = new AbortController()
++  const source = await listen((_req, res) => {
++    res.writeHead(200)
++    res.write("partial")
++  })
++  try {
++    const request = new Request(source.url, { method: "POST", body: "fake", signal: controller.signal })
++    await assert.rejects(Effect.runPromise(execute(request, true, () => controller.abort())))
++  } finally {
++    await close(source.server)
++  }
++})
++
++test("scoped fetch preserves Effect cancellation and inherited fetch options", async () => {
++  let signal: AbortSignal | undefined
++  let redirect: Request["redirect"] | undefined
++  const original = globalThis.fetch
++  const fetcher: typeof fetch = Object.assign(
++    async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
++      assert.equal(init?.cache, "no-store")
++      signal = init?.signal ?? undefined
++      redirect = init?.redirect
++      return await new Promise<Response>((_resolve, reject) =>
++        signal!.addEventListener("abort", () => reject(signal!.reason), { once: true }),
++      )
++    },
++    original,
++  )
++  const request = new Request("http://127.0.0.1:1", { method: "POST", body: "fake", redirect: "error" })
++  const controller = new AbortController()
++  const pending = Effect.runPromise(
++    execute(request).pipe(
++      Effect.provideService(FetchHttpClient.Fetch, fetcher),
++      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "follow", cache: "no-store" }),
++    ),
++    { signal: controller.signal },
++  )
++  await new Promise<void>((resolve) => setImmediate(resolve))
++  assert.equal(signal?.aborted, false)
++  assert.equal(redirect, "error")
++  controller.abort()
++  await assert.rejects(pending)
++  assert.equal(signal?.aborted, true)
++  assert.equal(globalThis.fetch, original)
++})

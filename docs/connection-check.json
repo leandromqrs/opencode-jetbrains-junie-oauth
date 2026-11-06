@@ -1,0 +1,23 @@
+{
+  "cli": {
+    "started": true,
+    "waiting": true,
+    "interrupted": true,
+    "code": 130,
+    "signal": null,
+    "callbackPort": "62345",
+    "output": "┌  Connect an integration\n\u001b[?25l│\n◇  Authorization started\n\u001b[?25h│\n●  Open this URL in a browser on this machine. Subscription usage and terms are unverified. No model request is made during login.\n│\n●  [sandbox authorization URL withheld]\n│\n◇  Waiting for authorization...\n└  Cancelled\n\n",
+    "listenerAfterCancel": "closed"
+  },
+  "start": {
+    "status": 200,
+    "mode": "auto",
+    "authOrigin": "https://junie.jetbrains.com",
+    "callbackPort": "62345"
+  },
+  "listenerBeforeCancel": 400,
+  "listenerAfterCancel": "closed",
+  "error": null,
+  "cancelStatus": 204,
+  "connectionsAfter": []
+}

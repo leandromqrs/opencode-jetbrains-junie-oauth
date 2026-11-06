@@ -1,0 +1,47 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "pkg:npm/%40opencode/core@2.2.5",
+      "digest": {
+        "sha512": "ea8b1b5b5ed30475dd8c53c72ae9ffbe104b1536a65305d074181fb5eeff7c36958c8fcdf4cbae593400fd4abd9b3cc9f29c5008451e3c10771ded967b4c5f23"
+      }
+    }
+  ],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "buildDefinition": {
+      "buildType": "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+      "externalParameters": {
+        "workflow": {
+          "ref": "refs/heads/dev",
+          "repository": "https://github.com/anomalyco/opencode",
+          "path": ".github/workflows/release.yml"
+        }
+      },
+      "internalParameters": {
+        "github": {
+          "event_name": "workflow_dispatch",
+          "repository_id": "975734319",
+          "repository_owner_id": "66570915"
+        }
+      },
+      "resolvedDependencies": [
+        {
+          "uri": "git+https://github.com/anomalyco/opencode@refs/heads/dev",
+          "digest": {
+            "gitCommit": "958f965d35ed44d32b018fd55b02a5357a7748fd"
+          }
+        }
+      ]
+    },
+    "runDetails": {
+      "builder": {
+        "id": "https://github.com/actions/runner/github-hosted"
+      },
+      "metadata": {
+        "invocationId": "https://github.com/anomalyco/opencode/actions/runs/41135857908/attempts/1"
+      }
+    }
+  }
+}

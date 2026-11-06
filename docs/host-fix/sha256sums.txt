@@ -1,0 +1,3 @@
+9b295efe14e64105d99f7edda87ce6205e722954f3a133c38f9db630d6b6886c  baseline/packages/core/src/session/model-request.ts
+dfa66bd4c017557e6b5efc58ef9414e5f69ea307121832efa8115469f4190885  patched/packages/core/src/session/model-request.ts
+9816d3b7fd89007b9700d2241bf454dc32ea9f06e6e1e7881bfbb820ba33b3f1  source-fix.patch
