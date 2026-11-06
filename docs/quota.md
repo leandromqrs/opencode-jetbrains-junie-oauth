@@ -45,11 +45,19 @@ The bridge receives `requestTimeoutMs` (12 seconds by default) internally and li
 This agent's MCP `quota_provider_test` did not receive the service variable and reported a missing key. Integrated verification was performed by the OpenCode process itself, whose environment contains the key, using the panel's refresh RPC:
 
 ```sh
-opencode api post /api/rpc/slkiser.opencode-quota/refresh --data '{"input":{"reason":"manual","providerIds":["jetbrains"]}}'
+opencode api post /api/rpc/slkiser.opencode-quota/refresh --data '{"input":{"reason":"manual","providerIds":["quota-providers"]}}'
 ```
 
 The snapshot returned an entry with authority `provider_reported`, type `balance`, label `Junie balance`, and account `Junie`, without passing on the JetBrains token.
 
 The standalone migration was validated against the explicit LuminusOS location: the adapter returned HTTP 200, kept the same process across a project reload, and the quota plugin refresh returned `19.889935 credits` with no provider error. LuminusOS and the home location both published 36 models and 159 variants from the shared catalog; LuminusOS restored them after reload without another catalog refresh. Integration metadata now displays `JetBrains / Junie` while retaining ID `jetbrains-junie-oauth`. Immediately during a location reload, native endpoints may temporarily return not-ready errors; this is distinct from the adapter losing its listener.
+
+## Repair after a service restart
+
+On 2026-11-06, the panel's “Custom providers / Not set up” state was traced to a missing `JUNIE_QUOTA_ADAPTER_KEY` in the OpenCode server environment. The standalone adapter was also stopped. Native Junie OAuth and balance retrieval remained healthy.
+
+Restarting with an environment variable on just the repair process was insufficient: another running client won the service-start race with its old environment. OpenCode 2.2.5 supports a private global `service.json` environment map, loaded by each CLI client's service configuration. Persisting the existing adapter key there, preserving unrelated settings, and restarting the service resolved the race without changing the OAuth login or rotating the adapter key. Never put the key in shell arguments, logs, this repository or shared documentation.
+
+Validation through the actual `quota-providers` collector returned `Junie balance`, type `balance`, with **11.956759 credits** and no provider error. The service environment now survives native restarts, but the adapter remains a transient unit and must still be started after a reboot.
 
 Real inference use remains subject to the OpenCode 2.2.5 transport blocker described in [host-transport-blocker.md](host-transport-blocker.md). Querying the balance through a direct, protected fetch is a metadata operation, not a model call or an installation of the host patch.
