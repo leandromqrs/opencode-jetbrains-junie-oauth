@@ -14,11 +14,38 @@ The installed quota plugin has no public API for dynamic provider registration. 
 
 The bridge must listen only on `127.0.0.1`, accept only `GET /quota`, and authenticate with a key **separate** from the JetBrains token. The balance query may occur only after validating this key. No JetBrains token is returned to the consumer.
 
-In this environment, the `junie-balance` custom definition is **enabled**, with provider `jetbrains`, URL `http://127.0.0.1:62365/quota`, format `quota-v1`, and `apiKeyEnv: "JUNIE_QUOTA_ADAPTER_KEY"`. Port 62365 is outside the OAuth callback range. Actual validation confirmed HTTP 401 without a key, HTTP 200 with the independent key, and a `Junie balance` entry in the quota plugin snapshot with `19.889935 credits` on 2026-11-06.
+In this environment, the `junie-balance` custom definition is **enabled**, with provider `jetbrains`, URL `http://127.0.0.1:62365/quota`, format `quota-v1`, and `apiKeyEnv: "JUNIE_QUOTA_BRIDGE_KEY"`. Port 62365 is outside the OAuth callback range. The earlier standalone setup used `JUNIE_QUOTA_ADAPTER_KEY` and returned `19.889935 credits` on 2026-11-06; the automatic setup below uses an independently generated bridge key instead.
 
 The format is a value entry with `resultType: "balance"`. Do not include a percentage, total limit, or reset. Unavailability must be distinguished from an actual zero balance.
 
 ## Configuration and environment
+
+### Automatic plugin-managed bridge
+
+Opt in through the Junie plugin's options:
+
+```json
+{
+  "quotaBridge": {
+    "port": 62365,
+    "apiKeyEnv": "JUNIE_QUOTA_BRIDGE_KEY",
+    "autoKey": true,
+    "shared": true
+  }
+}
+```
+
+Keep the existing custom provider URL `http://127.0.0.1:62365/quota`, provider ID, `remote-api` mode, `quota-v1` format, and enabled flag. Its `apiKeyEnv` must match `JUNIE_QUOTA_BRIDGE_KEY`. No quota-consumer source change is required. Do not export a separate value for this dedicated variable: the Junie plugin publishes the account-bound bearer in its process environment after listener setup. A conflicting inherited value is preserved and reported as `incompatible-config`, not overwritten.
+
+The shared root key is generated independently of OAuth and the old adapter at `~/.local/state/opencode-jetbrains-junie-oauth/quota-bridge-v1/bridge.key`. The directory must remain `0700`, and the key must be a `0600` regular file owned by the user. State must be outside participating project paths, including their canonical targets. Never copy the root key into a project, print it, configure it as a Junie OAuth token, or commit it. No old key file is read or migrated.
+
+The listener starts with the plugin, without requesting balance metadata. Authenticated panel refreshes use the existing active-account quota reader. Multiple locations share a process-owned listener; unloading one does not stop the others. Multiple processes authenticate a compatible owner with a nonce/HMAC health protocol and recover the port after the owner exits. After a reboot, opening OpenCode with this plugin enabled recreates the listener and environment key from private state. No manual adapter command, systemd unit, or external daemon is needed.
+
+Status reports `management: "plugin"` and `running: true` only for an attached listener. It is not a claim that upstream balance retrieval is healthy. Sanitized diagnostics include `missing-account`, `ambiguous-account`, `incompatible-config`, and `start-failed`. Different active connection identities derive different transport bearers and cannot silently attach to each other's owner. Conflicting local leases or account changes fail closed. Balance reads recheck local identities before and after retrieval; shared followers detect their own changes during periodic local monitoring. Account-change synchronization across processes is not instantaneous. Close old managed locations and reload after an account switch, or after signing in when startup reported `missing-account`.
+
+`autoKey: true` without `shared: true` uses an ephemeral, account-bound key and process-local leases. Use shared mode for fixed-port multi-process and reboot recovery. Omitting `autoKey` preserves the external-adapter behavior below. Do not run a legacy adapter on the same port as a managed bridge; an unrecognized listener causes `start-failed` without receiving the bearer or being stopped.
+
+### Legacy standalone adapter
 
 The quota plugin's remote provider uses an environment variable specified by `apiKeyEnv` in the **OpenCode service process**. The standalone adapter reads the matching key from a protected file. Exporting a variable in another terminal does not change the environment of an already running service.
 
@@ -38,11 +65,11 @@ The Linux wrapper uses a transient user systemd service. It survives terminal cl
 
 The balance module is implemented in `src/quota.ts`; the hardened listener is in `src/quota-bridge.ts`. The standalone `src/quota-adapter.ts` discovers the native service through the supported client API for every authenticated request and invokes only the public `jetbrains-junie/quota` RPC for the explicitly configured location. It does not cache balances or receive JetBrains tokens. Native service replacement is discovered on subsequent requests.
 
-The legacy plugin option `quotaBridge: { port: 62365, apiKeyEnv: "JUNIE_QUOTA_ADAPTER_KEY" }` now describes an externally managed bridge; it does **not** create a listener. RPC status reports `management: "external"` and `running: null` rather than claiming reachability. Start and monitor the adapter separately. This removes competing port binds and prevents disposal of an arbitrary project from closing the panel's endpoint.
+The legacy plugin option `quotaBridge: { port: 62365, apiKeyEnv: "JUNIE_QUOTA_ADAPTER_KEY" }` describes an externally managed bridge when `autoKey` is absent; it does **not** create a listener. RPC status reports `management: "external"` and `running: null` rather than claiming reachability. Start and monitor this legacy adapter separately, or opt into the automatic mode above.
 
 The bridge receives `requestTimeoutMs` (12 seconds by default) internally and limits requests, connections, and header size. It rejects methods other than GET, paths other than `/quota`, query strings, unexpected Host, browser Origin, and missing or invalid authentication before querying the balance. Shutdown releases connections and the port.
 
-This agent's MCP `quota_provider_test` did not receive the service variable and reported a missing key. Integrated verification was performed by the OpenCode process itself, whose environment contains the key, using the panel's refresh RPC:
+During the earlier standalone setup, the MCP `quota_provider_test` did not receive the service variable and reported a missing key. Integrated verification was performed by the OpenCode process itself, whose environment contained the key, using the panel's refresh RPC:
 
 ```sh
 opencode api post /api/rpc/slkiser.opencode-quota/refresh --data '{"input":{"reason":"manual","providerIds":["quota-providers"]}}'
@@ -61,3 +88,11 @@ Restarting with an environment variable on just the repair process was insuffici
 Validation through the actual `quota-providers` collector returned `Junie balance`, type `balance`, with **11.956759 credits** and no provider error. The service environment now survives native restarts, but the adapter remains a transient unit and must still be started after a reboot.
 
 Real inference use remains subject to the OpenCode 2.2.5 transport blocker described in [host-transport-blocker.md](host-transport-blocker.md). Querying the balance through a direct, protected fetch is a metadata operation, not a model call or an installation of the host patch.
+
+## Automatic bridge activation (2026-11-12)
+
+After explicit user approval, the Junie plugin options were updated to `autoKey: true`, `shared: true` and `apiKeyEnv: "JUNIE_QUOTA_BRIDGE_KEY"`, retaining port 62365. The existing Custom-provider definition was updated through the consumer's supported API and explicitly re-enabled using its request fingerprint. No quota-consumer source, OAuth credential, inference driver or host service was changed. The old adapter key was not read or migrated.
+
+The full Junie suite passed 91 tests; typecheck, standalone-adapter checks, build and diff checking also passed. Multi-process regressions cover concurrent startup, owner-exit takeover and account isolation, including revocation of an inherited matching bearer after a follower changes accounts. Conflicting inherited values remain untouched. These tests use synthetic accounts and private temporary state.
+
+Following activation, native status reported a plugin-managed running bridge. A targeted panel refresh returned the `Junie balance` row, and the standard `quota_provider_test` returned `12.305867 credits`. Missing and incorrect bearer requests returned HTTP 401; a browser-origin request returned HTTP 403. After another authorized location reload, My and LuminusOS both reported a running bridge, and the standard provider test returned the same balance again. This establishes live retrieval and reload recovery; a full operating-system reboot has not yet been observed after activation.

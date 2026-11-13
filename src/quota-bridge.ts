@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto"
+import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import type { Socket } from "node:net"
 import { toJunieQuotaV1, type JunieBalance } from "./quota.js"
@@ -10,11 +10,20 @@ export interface QuotaBridgeOptions {
   getBalance: (signal: AbortSignal) => Promise<JunieBalance>
   signal?: AbortSignal
   requestTimeoutMs?: number
+  sharedHealth?: boolean
 }
 
 export interface QuotaBridge {
   url: string
   close(): Promise<void>
+}
+
+export function quotaBridgeProof(token: string, direction: "request" | "response", challenge: string): string {
+  return createHmac("sha256", token).update(`junie-quota-bridge-v1:${direction}:${challenge}`).digest("hex")
+}
+
+export function validQuotaBridgeProof(token: string, direction: "request" | "response", challenge: string, proof: string): boolean {
+  return /^[a-f0-9]{64}$/.test(proof) && timingSafeEqual(Buffer.from(proof, "hex"), Buffer.from(quotaBridgeProof(token, direction, challenge), "hex"))
 }
 
 function headerCount(request: IncomingMessage, name: string): number {
@@ -63,6 +72,7 @@ export async function startQuotaBridge(options: QuotaBridgeOptions): Promise<Quo
   const sockets = new Set<Socket>()
   const active = new Set<AbortController>()
   let authority = ""
+  let boundPort = options.port
   let closing: Promise<void> | undefined
   const server = createServer({
     maxHeaderSize: 4_096,
@@ -93,10 +103,18 @@ export async function startQuotaBridge(options: QuotaBridgeOptions): Promise<Quo
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (closing) return reject(response, 503)
     if (request.method !== "GET") return reject(response, 405)
-    if (request.url !== "/quota") return reject(response, 404)
+    const health = request.url === "/quota-bridge-health" && options.sharedHealth === true
+    if (request.url !== "/quota" && !health) return reject(response, 404)
     if (request.socket.remoteAddress !== "127.0.0.1" || request.headers.host !== authority || headerCount(request, "host") !== 1) return reject(response, 400)
     if (request.headers.origin !== undefined) return reject(response, 403)
     if (request.headers["transfer-encoding"] !== undefined || (request.headers["content-length"] !== undefined && request.headers["content-length"] !== "0")) return reject(response, 400)
+    if (health) {
+      const nonce = request.headers["x-junie-nonce"], proof = request.headers["x-junie-proof"]
+      if (typeof nonce !== "string" || !/^[a-f0-9]{64}$/.test(nonce) || typeof proof !== "string" || headerCount(request, "x-junie-nonce") !== 1 || headerCount(request, "x-junie-proof") !== 1 || !validQuotaBridgeProof(options.token, "request", `${boundPort}:${nonce}`, proof)) return reject(response, 401)
+      response.writeHead(204, { "Cache-Control": "no-store", Connection: "close", "X-Junie-Protocol": "1", "X-Junie-Proof": quotaBridgeProof(options.token, "response", `${boundPort}:${nonce}`) })
+      response.end()
+      return
+    }
     const authorization = request.headers.authorization
     if (typeof authorization !== "string" || authorization.length > 519 || headerCount(request, "authorization") !== 1 || !timingSafeEqual(createHash("sha256").update(authorization).digest(), expectedAuth)) return reject(response, 401)
     const controller = new AbortController()
@@ -138,6 +156,7 @@ export async function startQuotaBridge(options: QuotaBridgeOptions): Promise<Quo
     const address = server.address()
     if (!address || typeof address === "string") throw new Error("Unable to start quota bridge.")
     authority = `127.0.0.1:${address.port}`
+    boundPort = address.port
     options.signal?.addEventListener("abort", onStop, { once: true })
     if (options.signal?.aborted) throw new Error("Quota bridge start cancelled.")
     return { url: `http://${authority}/quota`, close }

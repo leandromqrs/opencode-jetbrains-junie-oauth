@@ -1,6 +1,6 @@
 # Architecture
 
-The plugin registers provider `jetbrains` and integration `jetbrains-junie-oauth` through OpenCode's native plugin API. `src/index.ts` owns registration, validated options, scoped hooks, and cleanup. It does not own a token database, inference driver, or quota daemon.
+The plugin registers provider `jetbrains` and integration `jetbrains-junie-oauth` through OpenCode's native plugin API. `src/index.ts` owns registration, validated options, scoped hooks, and cleanup. It does not own an OAuth token database, inference driver, or external quota daemon. An opt-in quota listener runs inside the plugin process.
 
 ## Authentication and inference
 
@@ -44,7 +44,7 @@ RPCs `status` and `catalog` expose cache state and provenance. Listed limits ove
 
 `src/quota.ts` reads only the fixed Junie `/auth/test` endpoint using the active OAuth connection. It projects balance metadata, never identity fields. Credit units divide by 100,000; USD is unscaled. Unsupported or missing values remain unavailable. No allocation, percentage, spending, or reset date is inferred.
 
-The optional panel path is:
+The legacy external-adapter panel path is:
 
 ```mermaid
 sequenceDiagram
@@ -64,11 +64,17 @@ sequenceDiagram
     Adapter-->>Consumer: Bounded quota-v1 response
 ```
 
-`src/quota-bridge.ts` accepts authenticated `GET /quota` on `127.0.0.1` and emits only `quota-v1` balance/status data. Method, path, Host, Origin, body, and independent Bearer-key checks precede balance retrieval. Requests, connections, bodies, and shutdown are bounded.
+`src/quota-bridge.ts` accepts authenticated `GET /quota` on `127.0.0.1` and emits only `quota-v1` balance/status data. Method, path, Host, Origin, body, and independent Bearer-key checks precede balance retrieval. Requests, connections, bodies, and shutdown are bounded. Shared mode adds an authenticated, provider/port/direction-bound nonce health exchange that never reads upstream balance metadata or sends the bearer to an unknown listener.
 
 `src/quota-adapter.ts` discovers the native service on every authenticated request and invokes only the quota RPC for an explicit project location. It does not cache balances or receive JetBrains OAuth tokens. Service credentials are restricted to loopback RPC dispatch. `src/cancellation.ts` shares prompt abort rejection for operations that ignore cancellation, without replacing each caller's resource cleanup.
 
-The adapter is externally managed, not tied to a project plugin lifecycle. The legacy `quotaBridge` option only describes its URL in status (`running: null`). Linux scripts protect the separate key file and manage a transient user service; it is not reboot-persistent. See [quota operations and validation](docs/quota.md).
+Without `quotaBridge.autoKey: true`, the legacy option still describes an externally managed adapter (`management: "external", running: null`), preserving standalone deployments. Linux wrapper services remain transient and are not reboot-persistent.
+
+With `autoKey: true`, `src/quota-bridge-plugin.ts` acquires a scope-owned lease and calls `discovery.balance` directly, forwarding request cancellation into `Effect.runPromise`. A process-global serialized registry prevents competing binds and retains the listener until the final location releases its lease. Status reports listener availability, not upstream health. Setup only resolves the active connection identity locally; it never resolves OAuth tokens or queries upstream.
+
+`shared: true` additionally uses `src/quota-bridge-storage.ts` to publish one private Junie-only root key outside participating workspaces (`0700` directory, `0600` regular single-link key). State rejects unsafe ancestry, symlinks, broad permissions, malformed/oversized data, and unexplained hardlinks. Only a matching private staging inode permits recovery of an interrupted atomic key publication. No legacy adapter key is read or migrated. A transport bearer is HMAC-derived from this root key, the Junie protocol, port, and active connection identity; accounts do not share a transport bearer. The OAuth token is never an input.
+
+`src/quota-bridge-shared.ts` authenticates an existing owner or binds the fixed loopback port, then performs bounded background health checks and follower takeover after owner exit. Concurrent processes share the same root key without an external service. Local leases must have the same connection identity; conflicting leases revoke a process-owned consumer key and fail closed. Balance reads recheck every local lease before and after retrieval. Shared followers recheck their own connection identity during monitoring and revoke their environment key on a change; this local synchronization is periodic, not an atomic cross-host account-change transaction. Account changes require closing the old managed leases and reloading the location before reactivation. See [quota operations and validation](docs/quota.md).
 
 ## Verification boundary
 

@@ -108,6 +108,71 @@ test("external bridge status does not inspect the service key or claim reachabil
   }
 })
 
+test("opt-in native plugin lifecycle owns its listener and balance cancellation without startup metadata reads", async () => {
+  const reservation = createServer()
+  await new Promise<void>(resolve => reservation.listen(0, "127.0.0.1", resolve))
+  const port = (reservation.address() as { port: number }).port
+  await new Promise<void>(resolve => reservation.close(() => resolve()))
+  const originalFetch = globalThis.fetch
+  const envName = "JUNIE_TEST_NATIVE_MANAGED_KEY"
+  const previous = process.env[envName]
+  delete process.env[envName]
+  let metadataCalls = 0
+  let stall = false
+  let upstreamSignal: AbortSignal | undefined
+  let started!: () => void
+  const upstreamStarted = new Promise<void>(resolve => { started = resolve })
+  let handlers: Record<string, () => Effect.Effect<any>> = {}
+  const registration = { dispose: Effect.void }
+  const ctx = {
+    storage: memoryStorage().storage, event: { subscribe: () => Stream.empty },
+    options: { quotaBridge: { port, apiKeyEnv: envName, autoKey: true } },
+    rpc: { register: (_: unknown, value: typeof handlers) => Effect.sync(() => { handlers = value; return registration }) },
+    provider: { transform: () => Effect.succeed(registration) },
+    integration: { transform: () => Effect.succeed(registration), connection: {
+      active: () => Effect.succeed({ type: "credential", id: "fixture", method: "oauth" }),
+      resolve: () => Effect.succeed({ type: "oauth", access: "synthetic-native-access" }),
+    } },
+    session: { hook: () => Effect.succeed(registration) },
+  }
+  globalThis.fetch = async (input, init) => {
+    if (!String(input).startsWith("https://ingrazzio-cloud-prod.labs.jb.gg")) return originalFetch(input, init)
+    metadataCalls++
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer synthetic-native-access")
+    if (stall) {
+      upstreamSignal = init?.signal ?? undefined
+      started()
+      return new Promise((_resolve, reject) => upstreamSignal!.addEventListener("abort", () => reject(new Error("Synthetic cancellation")), { once: true }))
+    }
+    return Response.json({ active: true, licenseType: "AIP", balanceUnit: "CREDITS", balanceLeft: 1230000 })
+  }
+  const scope = await Effect.runPromise(Scope.make())
+  let url = ""
+  try {
+    await Effect.runPromise(plugin.effect(ctx as unknown as Plugin.Context).pipe(Scope.provide(scope)))
+    const status = await Effect.runPromise(handlers.status())
+    assert.equal(status.quotaBridge.management, "plugin")
+    assert.equal(status.quotaBridge.running, true)
+    assert.equal(metadataCalls, 0)
+    url = status.quotaBridge.url
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${process.env[envName]}` } })
+    assert.equal(response.status, 200)
+    assert.match(JSON.stringify(await response.json()), /12\.3/)
+    assert.equal(metadataCalls, 1)
+    stall = true
+    const pending = fetch(url, { headers: { Authorization: `Bearer ${process.env[envName]}` } }).catch(() => undefined)
+    await upstreamStarted
+    await Effect.runPromise(Scope.close(scope, Exit.void))
+    assert.equal(upstreamSignal?.aborted, true)
+    await pending
+  } finally {
+    await Effect.runPromise(Scope.close(scope, Exit.void))
+    globalThis.fetch = originalFetch
+    if (previous === undefined) delete process.env[envName]; else process.env[envName] = previous
+  }
+  await assert.rejects(fetch(url))
+})
+
 test("discovered public aliases bind dated wire requests and invalidate publication on account changes", async () => {
   const originalFetch = globalThis.fetch
   let handlers: Record<string, () => Effect.Effect<any>> = {}

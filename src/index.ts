@@ -4,6 +4,10 @@ import { beginLogin, METHOD_ID, singleFlightRefresh, type Login } from "./oauth.
 import { prepareRequest, sanitizeResponse, UPSTREAM } from "./transport.js"
 import { CATALOG_CHANGED_EVENT, catalogRPC, connectionKey, createDiscovery, type ActiveConnection } from "./discovery.js"
 import { nativeModel, type AccountModel } from "./inventory.js"
+import { acquireQuotaBridge, parseQuotaBridge, type QuotaBridgeConfig } from "./quota-bridge-plugin.js"
+import { homedir } from "node:os"
+import { dirname, resolve } from "node:path"
+export type { QuotaBridgeConfig } from "./quota-bridge-plugin.js"
 
 export const PROVIDER_ID = Provider.ID.make("jetbrains")
 export const INTEGRATION_ID = Integration.ID.make("jetbrains-junie-oauth")
@@ -16,8 +20,6 @@ export interface ConfiguredModel {
   output: number
   tools: boolean
 }
-
-export interface QuotaBridgeConfig { port: number; apiKeyEnv: string }
 
 export function parseOptions(options: Record<string, unknown>): { models: ConfiguredModel[]; timeoutMs: number; quotaBridge?: QuotaBridgeConfig } {
   if (options.models !== undefined && (!Array.isArray(options.models) || options.models.length > 50)) {
@@ -39,14 +41,7 @@ export function parseOptions(options: Record<string, unknown>): { models: Config
   })
   const timeoutMs = options.timeoutMs ?? 120_000
   if (!Number.isSafeInteger(timeoutMs) || Number(timeoutMs) < 1000 || Number(timeoutMs) > 600_000) throw new Error("JetBrains timeoutMs must be between 1000 and 600000.")
-  let quotaBridge: QuotaBridgeConfig | undefined
-  if (options.quotaBridge !== undefined && options.quotaBridge !== false) {
-    const config = options.quotaBridge
-    if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("JetBrains quotaBridge requires a port and optional apiKeyEnv.")
-    const { port, apiKeyEnv = "JUNIE_QUOTA_ADAPTER_KEY" } = config as Record<string, unknown>
-    if (!Number.isSafeInteger(port) || Number(port) < 1 || Number(port) > 65535 || typeof apiKeyEnv !== "string" || !/^[A-Z][A-Z0-9_]{0,127}$/.test(apiKeyEnv)) throw new Error("JetBrains quotaBridge requires port 1–65535 and a valid apiKeyEnv name.")
-    quotaBridge = { port: Number(port), apiKeyEnv }
-  }
+  const quotaBridge = parseQuotaBridge(options.quotaBridge)
   return { models, timeoutMs: Number(timeoutMs), ...(quotaBridge ? { quotaBridge } : {}) }
 }
 
@@ -60,7 +55,11 @@ export default Plugin.define({
       discovered = { models, connection }
       yield* ctx.provider.reload()
     }), () => notify())
-    const bridgeStatus = { enabled: !!options.quotaBridge, management: "external", running: null, ...(options.quotaBridge ? { url: `http://127.0.0.1:${options.quotaBridge.port}/quota` } : {}) }
+    const bridgeStatus = yield* acquireQuotaBridge(options.quotaBridge, {
+      workspaceRoots: [ctx.location?.directory, ctx.location?.project?.directory, ctx.location?.project?.canonical].filter(path => typeof path === "string" && resolve(path) !== resolve(homedir()) && dirname(resolve(path)) !== resolve(path)),
+      getAccount: signal => Effect.runPromise(ctx.integration.connection.active(INTEGRATION_ID), { signal }).then(connectionKey),
+      getBalance: signal => Effect.runPromise(discovery.balance, { signal }),
+    })
     const logins = new Set<Login>()
     yield* Effect.addFinalizer(() => Effect.sync(() => { for (const login of logins) login.cancel(); logins.clear() }))
     yield* ctx.provider.transform(editor => {
