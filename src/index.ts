@@ -11,6 +11,7 @@ export type { QuotaBridgeConfig } from "./quota-bridge-plugin.js"
 
 export const PROVIDER_ID = Provider.ID.make("jetbrains")
 export const INTEGRATION_ID = Integration.ID.make("jetbrains-junie-oauth")
+const DISPLAY_NAME = "Junie by Jetbrains"
 const refresh = singleFlightRefresh()
 
 export interface ConfiguredModel {
@@ -66,7 +67,7 @@ export default Plugin.define({
       editor.add({
         info: {
           ...Provider.Info.empty(PROVIDER_ID),
-          name: "JetBrains / Junie (unofficial)", activation: "enabled", integrationID: INTEGRATION_ID,
+          name: DISPLAY_NAME, activation: "enabled", integrationID: INTEGRATION_ID,
           package: "@opencode/ai/providers/anthropic-compatible",
           // The driver requires a key before HTTP hooks; the scoped hook strips this non-secret placeholder.
           settings: { baseURL: `${UPSTREAM}/v1`, apiKey: "oauth-hook-placeholder", timeout: options.timeoutMs, encoding: "none", transport: "http" },
@@ -102,13 +103,13 @@ export default Plugin.define({
         refresh: credential => Effect.tryPromise({ try: () => refresh(credential), catch: error => error }),
       })
       editor.update(INTEGRATION_ID, integration => {
-        integration.name = "JetBrains / Junie"
+        integration.name = DISPLAY_NAME
       })
     })
     yield* ctx.session.hook("http.request", event => Effect.gen(function* () {
       yield* discovery.synchronize
       const connection = yield* ctx.integration.connection.active(INTEGRATION_ID)
-      if (!connection) throw new Error("Sign in to the JetBrains / Junie integration before using this provider.")
+      if (!connection) throw new Error(`Sign in to ${DISPLAY_NAME} before using this provider.`)
       const credential = yield* ctx.integration.connection.resolve(connection).pipe(
         Effect.catch(() => Effect.die(new Error("JetBrains credentials could not be resolved; sign in again."))),
       )
