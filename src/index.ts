@@ -5,6 +5,7 @@ import { prepareRequest, sanitizeResponse, UPSTREAM } from "./transport.js"
 import { CATALOG_CHANGED_EVENT, catalogRPC, connectionKey, createDiscovery, type ActiveConnection } from "./discovery.js"
 import { nativeModel, type AccountModel } from "./inventory.js"
 import { acquireQuotaBridge, parseQuotaBridge, type QuotaBridgeConfig } from "./quota-bridge-plugin.js"
+import { quotaPanelRPC, quotaPanelSnapshot } from "./quota-rpc.js"
 import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
 export type { QuotaBridgeConfig } from "./quota-bridge-plugin.js"
@@ -86,6 +87,11 @@ export default Plugin.define({
       catalog: () => discovery.catalog,
       quota: () => discovery.balance,
     }).pipe(Effect.orDie)
+    if (ctx.options.quotaRpc === true) {
+      yield* ctx.rpc.register(quotaPanelRPC, {
+        status: () => discovery.balance.pipe(Effect.map(balance => quotaPanelSnapshot(DISPLAY_NAME, balance))),
+      }).pipe(Effect.catch(() => Effect.logWarning("Could not register the experimental Junie quota RPC.")))
+    }
     notify = () => registration.events.emit("catalogUpdated", {}).pipe(Effect.catch(() => Effect.void))
     yield* ctx.integration.transform(editor => {
       editor.method.update({

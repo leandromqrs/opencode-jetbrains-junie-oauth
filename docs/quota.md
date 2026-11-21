@@ -8,6 +8,29 @@ The installed Junie 3959.5 implementation divides credit values by **100,000**. 
 
 The endpoint does not report the contracted total, amount spent, renewal date, or reset. Therefore, the balance must not be converted into a percentage or used to invent a renewal forecast. The 19.89 credits in the supplied image are a historical observation, not a balance queried by the plugin.
 
+## Experimental native quota RPC
+
+Set `"quotaRpc": true` in the Junie plugin entry's `options` to register `jetbrains.quota/status` in that OpenCode location. The ID uses the OpenCode provider ID (`jetbrains`), not the OAuth integration ID. This is opt-in and does not configure the HTTP bridge, replace `jetbrains-junie/quota`, or require a separate process or bearer key.
+
+From a location that loads the plugin, replace the project path and probe the RPC:
+
+```sh
+opencode api post '/api/rpc/jetbrains.quota/status?location[directory]=/absolute/path/to/project' --data '{"input":{}}'
+```
+
+The output follows the [`<providerID>.quota` convention](https://github.com/WuJunkai2004/opencode-glm-vistatus/blob/main/docs/quota-rpc.md). Example with a synthetic balance:
+
+```json
+{
+  "label": "Junie by Jetbrains",
+  "groups": [{ "title": "Balance", "value": "19.89 credits" }]
+}
+```
+
+Consumers must support `value` rows. A zero balance is a value row; a missing connection, failed read, or account change during a read yields `groups: []`. Consumers should clear previously displayed values on an empty result, failed call, or location change. Each call reads the current account via the existing balance reader; the pilot does not poll or cache balances itself.
+
+In a build of OpenCode Quota that includes the Junie native reader, the `jetbrains.balance` row appears under **Junie by Jetbrains**. It reports credits or USD, without a usage percentage or reset time. Verify the native row on the OpenCode installation you actually use before removing the Junie custom provider or its bridge; older builds still need the bridge.
+
 ## Optional bridge
 
 The installed quota plugin has no public API for dynamic provider registration. Integration without modifying it uses a `remote-api` custom provider that reads a local endpoint returning `quota-v1`.
