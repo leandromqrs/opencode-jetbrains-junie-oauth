@@ -1,6 +1,8 @@
-# OpenCode JetBrains Junie OAuth
+# Junie by Jetbrains for OpenCode
 
-Unofficial JetBrains OAuth plugin for OpenCode, with account-scoped Claude, GPT, Gemini, and Grok discovery and an optional Junie balance panel.
+An unofficial OpenCode V2 plugin for signing in to Junie, discovering the models listed for your JetBrains account, and reading your remaining credits. The plugin is not affiliated with JetBrains.
+
+[Quick start](#quick-start) · [Balance panel](#balance-panel) · [Development](#development)
 
 > [!WARNING]
 > Do not enable real inference on the uncorrected OpenCode 2.2.5 host: it drops plugin redirect and cancellation safeguards. Read the [transport blocker](docs/host-transport-blocker.md). Successful login, discovery, or balance queries do not establish inference entitlement or transport safety.
@@ -9,10 +11,12 @@ Unofficial JetBrains OAuth plugin for OpenCode, with account-scoped Claude, GPT,
 
 Requires Node.js 22+, npm, OpenCode 2.2.5 (the tested version), and a JetBrains account. The browser must reach the machine running the OpenCode service.
 
-1. Build this checkout:
+1. Clone and build the plugin:
 
    ```sh
-   npm ci
+   git clone https://github.com/leandromqrs/opencode-jetbrains-junie-oauth.git
+   cd opencode-jetbrains-junie-oauth
+   npm ci --ignore-scripts
    npm run build
    ```
 
@@ -42,12 +46,23 @@ Requires Node.js 22+, npm, OpenCode 2.2.5 (the tested version), and a JetBrains 
 
    Models appear as `jetbrains/<model-id>`. Startup restores matching cached metadata without an upstream query; signing in alone does not fetch models. Eco is unsupported.
 
-5. Read the active account balance using the same project path:
+## Balance panel
 
-   ```sh
-   opencode api post '/api/rpc/jetbrains-junie/quota?location[directory]=/absolute/path/to/project' --data '{"input":{}}'
-   ```
+To check your balance without a panel, run the quota RPC using the same project path:
 
-   For a panel, follow the optional [quota adapter setup](docs/quota.md). It uses a separate private key and process; the Linux helper must be started again after reboot. An unavailable balance is not zero.
+```sh
+opencode api post '/api/rpc/jetbrains-junie/quota?location[directory]=/absolute/path/to/project' --data '{"input":{}}'
+```
 
-[Architecture](ARCHITECTURE.md) · [Development](CONTRIBUTING.md) · [Agent guidance](AGENTS.md) · [Model inventory](docs/account-catalog.md) · [Configuration examples](examples)
+To display it in OpenCode Quota, enable the [plugin-managed bridge](docs/quota.md#automatic-plugin-managed-bridge). It runs inside OpenCode and uses a separate loopback key; it does not require the legacy standalone adapter. Junie reports a remaining balance, not a total allowance or a reset time. An unavailable balance is not zero.
+
+## Development
+
+```sh
+npm run typecheck
+npm test
+npm run test:quota-adapter
+npm run build
+```
+
+[Architecture](ARCHITECTURE.md) · [Model inventory](docs/account-catalog.md) · [Configuration examples](examples)
