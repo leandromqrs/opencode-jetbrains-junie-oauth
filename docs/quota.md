@@ -8,6 +8,16 @@ The installed Junie 3959.5 implementation divides credit values by **100,000**. 
 
 The endpoint does not report the contracted total, amount spent, renewal date, or reset. Therefore, the balance must not be converted into a percentage or used to invent a renewal forecast. The 19.89 credits in the supplied image are a historical observation, not a balance queried by the plugin.
 
+## Publish balance to OpenCode Quota
+
+With an OpenCode Quota build that supports published sources, set `"publishQuota": true` in the Junie plugin options and leave `quotaBridge` off. Add this to `providers.custom` in OpenCode Quota's settings:
+
+```json
+{"id":"junie-balance","providerId":"jetbrains","label":"Junie","mode":"published"}
+```
+
+Both plugins must run in the same OpenCode location. Junie reads the active OAuth balance after startup, then repeats the read about every 30 seconds while Quota accepts publications. It sends only a `quota-v1` balance or an empty snapshot to withdraw it. No extra listener, key, or `quotaRpc` option is needed.
+
 ## Experimental native quota RPC
 
 Set `"quotaRpc": true` in the Junie plugin entry's `options` to register `jetbrains.quota/status` in that OpenCode location. The ID uses the OpenCode provider ID (`jetbrains`), not the OAuth integration ID. This is opt-in and does not configure the HTTP bridge, replace `jetbrains-junie/quota`, or require a separate process or bearer key.

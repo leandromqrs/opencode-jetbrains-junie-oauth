@@ -6,6 +6,7 @@ import { CATALOG_CHANGED_EVENT, catalogRPC, connectionKey, createDiscovery, type
 import { nativeModel, type AccountModel } from "./inventory.js"
 import { acquireQuotaBridge, parseQuotaBridge, type QuotaBridgeConfig } from "./quota-bridge-plugin.js"
 import { quotaPanelRPC, quotaPanelSnapshot } from "./quota-rpc.js"
+import { publishJunieQuota } from "./quota-publication.js"
 import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
 export type { QuotaBridgeConfig } from "./quota-bridge-plugin.js"
@@ -132,5 +133,6 @@ export default Plugin.define({
       Stream.runForEach(() => discovery.synchronize), Effect.catch(() => Effect.void), Effect.forkScoped,
     )
     yield* discovery.synchronize.pipe(Effect.andThen(Effect.sleep("15 seconds")), Effect.forever, Effect.forkScoped)
+    if (ctx.options.publishQuota === true) yield* publishJunieQuota(ctx, discovery.balance).pipe(Effect.forkScoped)
   }),
 })
