@@ -4,7 +4,7 @@ import { createHash } from "node:crypto"
 import { discoverCatalog, vendors, type Catalog } from "./catalog.js"
 import { reconcileCatalog, type AccountModel } from "./inventory.js"
 import { advertisedModels, METADATA_SOURCE } from "./static-catalog.js"
-import { getJunieBalance, type JunieBalance } from "./quota.js"
+import { getJunieBalance, type JunieBalance, type JunieBalanceUnavailableReason } from "./quota.js"
 import { ACCOUNT_ROUTING_HEADERS } from "./transport.js"
 
 export const CATALOG_CHANGED_EVENT = "rpc.jetbrains-junie.catalogUpdated"
@@ -14,6 +14,10 @@ const STALE_AFTER_MS = 24 * 60 * 60 * 1000
 const object = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 const integer = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0
 const digest = (value: string) => createHash("sha256").update(value).digest("hex")
+
+function unavailableBalance(reason: JunieBalanceUnavailableReason): JunieBalance {
+  return { state: "unavailable", reason, observedAt: new Date().toISOString() }
+}
 
 export const catalogRPC = Rpc.define({
   id: "jetbrains-junie",
@@ -135,15 +139,14 @@ export function createDiscovery(ctx: Plugin.Context, publish: (models: AccountMo
     }).pipe(Effect.ensuring(Effect.sync(() => { refreshing = false })))
   })
   const balance = Effect.gen(function* () {
-    const unavailable = (reason: "invalid-credentials" | "invalid-context"): JunieBalance => ({ state: "unavailable", reason, observedAt: new Date().toISOString() })
     const connection = yield* current
-    if (!connection) return unavailable("invalid-credentials")
+    if (!connection) return unavailableBalance("invalid-credentials")
+    const isCurrentAccount = current.pipe(Effect.map(active => connectionKey(active) === connectionKey(connection)))
     const credential = yield* ctx.integration.connection.resolve(connection).pipe(Effect.catch(() => Effect.succeed(undefined)))
-    if (!credential || credential.type !== "oauth") return unavailable("invalid-credentials")
-    if (connectionKey(connection) !== connectionKey(yield* current)) return unavailable("invalid-context")
+    if (credential?.type !== "oauth") return unavailableBalance("invalid-credentials")
+    if (!(yield* isCurrentAccount)) return unavailableBalance("invalid-context")
     const result = yield* Effect.promise(signal => getJunieBalance(credential.access, { signal, routingHeaders: ACCOUNT_ROUTING_HEADERS }))
-    if (connectionKey(connection) !== connectionKey(yield* current)) return unavailable("invalid-context")
-    return result
+    return (yield* isCurrentAccount) ? result : unavailableBalance("invalid-context")
   })
   return { refresh, status, catalog, balance, synchronize: current.pipe(Effect.asVoid), bindings: (connection: ActiveConnection) => cached && connectionKey(cached.connection) === connectionKey(connection) ? cached.models : [] }
 }

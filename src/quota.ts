@@ -3,6 +3,8 @@ import { withCancellation } from "./cancellation.js"
 const BALANCE_URL = "https://ingrazzio-cloud-prod.labs.jb.gg/auth/test"
 const TIMEOUT_MS = 10_000
 const MAX_BODY_BYTES = 65_536
+// Junie 3959.5 FormatCostKt defaults a missing unit to credits at this scale.
+const RAW_UNITS_PER_CREDIT = 100_000
 const licenses = new Set(["SEAT", "GZL", "NONE", "TRIAL", "AIP", "AIPU", "AIF", "JUNP"])
 const routingHeaderNames = new Set([
   "x-forced-license", "x-forced-licence", "x-forced-license-free", "x-forced-licence-free",
@@ -44,19 +46,31 @@ function unavailable(reason: JunieBalanceUnavailableReason, metadata: BalanceMet
   return { state: "unavailable", reason, ...metadata }
 }
 
+function isBalanceAmount(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER
+}
+
+function parseBalanceUnit(value: unknown): JunieBalanceUnit | undefined {
+  if (value === "USD") return "USD"
+  if (value == null || value === "CREDIT" || value === "CREDITS") return "credits"
+  return undefined
+}
+
 export function parseJunieBalance(payload: unknown, observedAt = new Date().toISOString()): JunieBalance {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return unavailable("invalid-response", { observedAt })
-  const data = payload as Record<string, unknown>
-  const metadata: BalanceMetadata = { observedAt }
-  if (typeof data.licenseType === "string" && licenses.has(data.licenseType)) metadata.license = data.licenseType
-  if (data.active !== undefined && data.active !== null && typeof data.active !== "boolean") return unavailable("invalid-response", metadata)
-  if (data.active === false || data.licenseType === "NONE") return unavailable("inactive", metadata)
-  if (data.licenseType === "GZL") return unavailable("unsupported-license", metadata)
-  if (typeof data.balanceLeft !== "number" || !Number.isFinite(data.balanceLeft) || data.balanceLeft < 0 || data.balanceLeft > Number.MAX_SAFE_INTEGER) return unavailable("missing-balance", metadata)
-  if (data.balanceUnit === "USD") return { state: "available", amount: data.balanceLeft, unit: "USD", ...metadata }
-  // Junie 3959.5 FormatCostKt defaults a missing unit to credits at 100000 raw units per credit.
-  if (data.balanceUnit !== undefined && data.balanceUnit !== null && data.balanceUnit !== "CREDIT" && data.balanceUnit !== "CREDITS") return unavailable("unsupported-unit", metadata)
-  return { state: "available", amount: data.balanceLeft / 100_000, unit: "credits", ...metadata }
+  const license = "licenseType" in payload ? payload.licenseType : undefined
+  const active = "active" in payload ? payload.active : undefined
+  const metadata = { observedAt, ...(typeof license === "string" && licenses.has(license) ? { license } : {}) }
+  if (active != null && typeof active !== "boolean") return unavailable("invalid-response", metadata)
+  if (active === false || license === "NONE") return unavailable("inactive", metadata)
+  if (license === "GZL") return unavailable("unsupported-license", metadata)
+
+  const rawAmount = "balanceLeft" in payload ? payload.balanceLeft : undefined
+  if (!isBalanceAmount(rawAmount)) return unavailable("missing-balance", metadata)
+  const unit = parseBalanceUnit("balanceUnit" in payload ? payload.balanceUnit : undefined)
+  if (!unit) return unavailable("unsupported-unit", metadata)
+  const amount = unit === "credits" ? rawAmount / RAW_UNITS_PER_CREDIT : rawAmount
+  return { state: "available", amount, unit, ...metadata }
 }
 
 export function formatJunieBalance(balance: JunieBalance): string {
@@ -75,6 +89,12 @@ export function toJunieQuotaV1(balance: JunieBalance): JunieQuotaV1 {
 
 class QuotaFailure extends Error {
   constructor(readonly reason: JunieBalanceUnavailableReason) { super(reason) }
+}
+
+function httpFailureReason(status: number): JunieBalanceUnavailableReason {
+  if (status === 401 || status === 403) return "unauthorized"
+  if (status === 429) return "rate-limited"
+  return "http-error"
 }
 
 function requestHeaders(accessToken: string, routingHeaders: JunieBalanceOptions["routingHeaders"]): Headers {
@@ -99,7 +119,8 @@ async function readMetadata(response: Response, signal: AbortSignal): Promise<un
     throw new QuotaFailure("body-too-large")
   }
   const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase()
-  if (!contentType || !(contentType === "application/json" || (contentType.startsWith("application/") && contentType.endsWith("+json"))) || !response.body) {
+  const isJson = contentType === "application/json" || (contentType?.startsWith("application/") && contentType.endsWith("+json"))
+  if (!isJson || !response.body) {
     cancelBody(response)
     throw new QuotaFailure("invalid-response")
   }
@@ -141,7 +162,7 @@ export async function getJunieBalance(accessToken: string, options: JunieBalance
     const response = await withCancellation(pending, controller.signal)
     if (!response.ok || response.redirected) {
       cancelBody(response)
-      return unavailable(response.status === 401 || response.status === 403 ? "unauthorized" : response.status === 429 ? "rate-limited" : "http-error")
+      return unavailable(httpFailureReason(response.status))
     }
     return parseJunieBalance(await readMetadata(response, controller.signal))
   } catch (error) {
